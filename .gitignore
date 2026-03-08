@@ -1,0 +1,50 @@
+# ====================
+# RLKV Monorepo .gitignore
+# ====================
+
+# Large files & shared resources (NEVER upload)
+shared_resources/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Model weights & checkpoints
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.ckpt
+*.distcp
+
+# Data files
+*.jsonl
+*.json
+!**/data.json
+*.csv
+*.parquet
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs & temp
+*.log
+/tmp/
+*.bak
+
+# Ray / Distributed
+/ray_results/
+/tmp/ray/
