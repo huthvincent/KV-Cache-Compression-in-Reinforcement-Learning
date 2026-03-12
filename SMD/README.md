@@ -65,7 +65,7 @@ flowchart LR
 
 ### Dual-Track Loss
 
-$$\mathcal{L}_{\text{SMD}} = \underbrace{\mathcal{L}_{\text{GRPO}}(\pi_\theta \odot M)}_{\text{Track 1: Shadow PG}} + \underbrace{\lambda \cdot D_{\text{KL}}\!\left(\pi_\theta^{\text{dense}} \;\|\; \text{sg}(\pi_\theta^{\text{shadow}})\right)}_{\text{Track 2: KL Distillation}}$$
+$$\mathcal{L}_{\text{SMD}} = \underbrace{\mathcal{L}_{\text{GRPO}}(\pi_\theta \odot M)}_{\text{Track 1: Shadow PG}} + \underbrace{\lambda \cdot D_{\text{KL}}\left(\pi_\theta^{\text{dense}} \| \text{sg}(\pi_\theta^{\text{shadow}})\right)}_{\text{Track 2: KL Distillation}}$$
 
 | Track | What it does | Why it matters |
 |:-----:|:-------------|:---------------|
