@@ -12,6 +12,10 @@ Large Language Models require enormous GPU memory for their KV caches during inf
 |---------|--------|-------------|
 | **[SMD](./SMD/)** | ✅ Active | Shadow Mask Distillation — Dual-track GRPO loss for KV-compressed RL |
 
+## Roadmap
+
+- 🔜 **Multi-GPU branch** — A new branch for multi-GPU distributed training is coming soon, enabling scaling experiments on larger models (7B+) with tensor/pipeline parallelism.
+
 ## Supported Models & Datasets
 
 ### Models
