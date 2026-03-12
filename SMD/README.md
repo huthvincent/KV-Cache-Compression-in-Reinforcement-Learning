@@ -39,7 +39,7 @@ flowchart LR
         B --> C["Compute Reward\n(ROUGE / Math / EM)"]
     end
 
-    subgraph INTERCEPT ["🎭 Shadow Mask Interceptor"]
+    subgraph INTERCEPT ["🎭 Shadow Mask"]
         B --> D["Attention Scores"]
         D --> E["Token Selection\n(SnapKV / Random / Recent)"]
         E --> F["Shadow Mask M\n(binary T×T matrix)"]
