@@ -11,6 +11,7 @@ Large Language Models require enormous GPU memory for their KV caches during inf
 | Project | Status | Description |
 |---------|--------|-------------|
 | **[SMD](./SMD/)** | ✅ Active | Shadow Mask Distillation — Dual-track GRPO loss for KV-compressed RL |
+| **[Baselines](./baselines/)** | ✅ Active | 4 SOTA comparison methods (Sparse-RL, QuRL, RLHFless, R-KV) |
 
 ## Roadmap
 
@@ -44,7 +45,12 @@ RLKV_github/
 │       ├── gsm8k/             #   Grade school math
 │       ├── gov_report/        #   Government report summarization
 │       └── hotpot_qa/         #   Multi-hop QA with distractors
-└── SMD/                       # Shadow Mask Distillation project
+├── baselines/                 # SOTA comparison methods
+│   ├── sparse_rl.py           #   Rejection sampling + importance reweighting
+│   ├── qurl.py                #   Update-Aware Quantization + adaptive PPO clipping
+│   ├── rlhfless.py            #   Serverless elastic scheduling
+│   └── r_kv.py                #   Redundancy-aware KV eviction
+└── SMD/                       # Shadow Mask Distillation (our method)
     ├── src/                   # Core Python modules (shadow mask, losses, rewards)
     │   └── rewards/           # Unified reward functions for all datasets
     ├── data_prep/             # Dataset download & formatting scripts
