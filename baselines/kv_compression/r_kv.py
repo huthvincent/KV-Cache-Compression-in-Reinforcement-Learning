@@ -96,6 +96,12 @@ def r_kv_loss_function(
         pg_clipfracs.append(((ratio - 1.0).abs() > eps).float() * lm)
         if i < len(entropy_list):
             all_entropies.append(entropy_list[i] * lm)
+        elif entropy_list:  # partial entropy: some samples missing
+            import logging
+            logging.getLogger(__name__).warning(
+                f"r_kv_loss: entropy_list has {len(entropy_list)} entries "
+                f"but num_samples={len(log_probs)}, sample {i} missing entropy"
+            )
 
     pg_loss = sum_of_sample_mean(torch.cat(pg_losses, dim=0))
     pg_clipfrac = sum_of_sample_mean(torch.cat(pg_clipfracs, dim=0))
@@ -126,7 +132,7 @@ class RKVCacheCompressor:
         # During decode loop:
         for token in generate():
             compressor.add_token(key_states, attn_weights)
-            if compressor.should_compress():
+            if compressor.tick_and_check_compress():
                 keep_indices = compressor.compute_eviction(key_states, attn_weights)
                 kv_cache = kv_cache[:, :, keep_indices, :]
 
@@ -157,8 +163,12 @@ class RKVCacheCompressor:
         self.tokens_since_compress = 0
         self.total_evictions = 0
 
-    def should_compress(self, current_cache_len: int) -> bool:
-        """Check if compression should be triggered."""
+    def tick_and_check_compress(self, current_cache_len: int) -> bool:
+        """Increment token counter and check if compression should trigger.
+        
+        WARNING: This method has side effects (increments counter).
+        Call exactly once per generated token.
+        """
         self.tokens_since_compress += 1
         if self.tokens_since_compress >= self.buffer_size and current_cache_len > self.budget:
             return True

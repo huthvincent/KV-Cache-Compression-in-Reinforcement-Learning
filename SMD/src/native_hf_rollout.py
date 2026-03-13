@@ -237,9 +237,16 @@ def generate_rollout(args, rollout_id: int, data_buffer, evaluation=False):
         eos_token_id = tokenizer.eos_token_id
 
         # Step 3: Autoregressive generation with (compressed) KV cache
+        pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id
         for _ in range(max_new_tokens - 1):
             if not any(unfinished):
                 break
+
+            # For finished sequences, feed pad token instead of continuing
+            feed_tokens = next_tokens.clone()
+            for b in range(batch_size):
+                if not unfinished[b]:
+                    feed_tokens[b, 0] = pad_token_id
 
             position_ids = torch.tensor([[cur_pos]] * batch_size, device=model.device)
             past_len = past_key_values.get_seq_length()
@@ -247,7 +254,7 @@ def generate_rollout(args, rollout_id: int, data_buffer, evaluation=False):
 
             with torch.no_grad():
                 outputs = model(
-                    input_ids=next_tokens,
+                    input_ids=feed_tokens,
                     past_key_values=past_key_values,
                     use_cache=True,
                     position_ids=position_ids,

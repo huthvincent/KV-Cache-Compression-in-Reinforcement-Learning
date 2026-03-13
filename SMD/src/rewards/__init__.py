@@ -145,15 +145,18 @@ def compute_hotpotqa_reward(response: str, label: str) -> float:
     if norm_label in norm_response:
         return 1.0
 
-    # Token-level F1 tiebreaker
-    pred_tokens = norm_response.split()
-    gold_tokens = norm_label.split()
-    common = set(pred_tokens) & set(gold_tokens)
-    if not common:
+    # Token-level F1 tiebreaker (SQuAD-style using Counter)
+    from collections import Counter
+    pred_tokens = Counter(norm_response.split())
+    gold_tokens = Counter(norm_label.split())
+    common_count = sum((pred_tokens & gold_tokens).values())
+    if common_count == 0:
         return 0.0
 
-    precision = len(common) / len(pred_tokens) if pred_tokens else 0
-    recall = len(common) / len(gold_tokens) if gold_tokens else 0
+    num_pred = sum(pred_tokens.values())
+    num_gold = sum(gold_tokens.values())
+    precision = common_count / num_pred if num_pred else 0
+    recall = common_count / num_gold if num_gold else 0
     if precision + recall == 0:
         return 0.0
     f1 = 2 * precision * recall / (precision + recall)
