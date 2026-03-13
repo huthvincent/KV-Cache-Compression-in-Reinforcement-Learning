@@ -80,6 +80,7 @@ class ShadowMaskInterceptor:
         prompt_length: int,
         response_length: int,
         seed: int | None = None,
+        attention_scores: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Generate a shadow mask for a single sample.
 
@@ -92,6 +93,10 @@ class ShadowMaskInterceptor:
             prompt_length: Number of tokens in the prompt.
             response_length: Number of tokens in the generated response.
             seed: Optional random seed for reproducibility (used by "random" strategy).
+            attention_scores: Optional per-key importance scores of shape (seq_len,)
+                or attention weights of shape (num_heads, seq_len, seq_len).
+                When provided with strategy="snapkv", uses these real attention
+                scores instead of the position-based heuristic.
 
         Returns:
             Boolean tensor of shape (total_len, total_len) where True indicates
@@ -112,7 +117,7 @@ class ShadowMaskInterceptor:
 
         # Select which prompt positions to retain
         retained_prompt_indices = self._select_prompt_positions(
-            prompt_length, num_prompt_keep, seed
+            prompt_length, num_prompt_keep, seed, attention_scores
         )
 
         # Build the shadow mask
@@ -135,6 +140,7 @@ class ShadowMaskInterceptor:
         prompt_length: int,
         num_keep: int,
         seed: int | None = None,
+        attention_scores: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Select which prompt KV positions to retain based on the configured strategy.
 
@@ -145,6 +151,9 @@ class ShadowMaskInterceptor:
             prompt_length: Total number of prompt tokens.
             num_keep: Number of positions to retain.
             seed: Random seed for the "random" strategy.
+            attention_scores: Optional real attention scores for SnapKV.
+                Shape: (seq_len,) for per-key importance, or
+                       (num_heads, seq_len, seq_len) for raw attention weights.
 
         Returns:
             Sorted tensor of retained position indices.
@@ -181,31 +190,107 @@ class ShadowMaskInterceptor:
             indices = torch.tensor(sorted(always_keep), dtype=torch.long)
 
         elif config.strategy == "snapkv":
-            # SnapKV-style importance scoring using position-based heuristic.
-            #
-            # True SnapKV uses actual attention weights from the prefill pass.
-            # Since we don't have access to those (SGLang is a black box), we
-            # approximate importance using a harmonic-mean distance metric:
-            # tokens closer to EITHER end (sink or recent) score higher.
-            importance = torch.zeros(prompt_length, dtype=torch.float32)
-
-            for i in range(prompt_length):
-                dist_start = i + 1
-                dist_end = prompt_length - i
-                importance[i] = 2.0 / (1.0 / dist_start + 1.0 / dist_end)
-
-                if i < config.sink_tokens:
-                    importance[i] += prompt_length  # Boost sink tokens
-                if i >= prompt_length - config.observation_window:
-                    importance[i] += prompt_length * 0.5  # Boost recent tokens
-
-            _, top_indices = importance.topk(num_keep)
-            indices = top_indices.sort().values
+            if attention_scores is not None:
+                # ── Real SnapKV: use actual attention weights ────────────
+                indices = self._select_by_real_attention(
+                    prompt_length, num_keep, attention_scores
+                )
+            else:
+                # ── Fallback: position-based heuristic ───────────────────
+                logger.debug(
+                    "No attention scores provided for SnapKV, using position heuristic"
+                )
+                indices = self._select_by_position_heuristic(
+                    prompt_length, num_keep
+                )
 
         else:
             raise ValueError(f"Unknown shadow mask strategy: {config.strategy}")
 
         return indices
+
+    def _select_by_real_attention(
+        self,
+        prompt_length: int,
+        num_keep: int,
+        attention_scores: torch.Tensor,
+    ) -> torch.Tensor:
+        """True SnapKV: select prompt positions using real attention weights.
+
+        This is the proper SnapKV algorithm as described in the paper:
+        1. Take attention from the observation window (last N query tokens)
+        2. Sum attention received by each key position across heads and queries
+        3. Always protect sink tokens and recent tokens
+        4. Select top-k positions by cumulative attention
+
+        Args:
+            prompt_length: Number of prompt tokens.
+            num_keep: Number of positions to retain.
+            attention_scores: Either:
+                - (seq_len,) per-key importance scores (pre-aggregated)
+                - (num_heads, seq_len, seq_len) raw attention weights
+
+        Returns:
+            Sorted tensor of retained position indices.
+        """
+        config = self.config
+
+        if attention_scores.dim() == 1:
+            # Pre-aggregated importance scores
+            importance = attention_scores[:prompt_length].float().clone()
+        elif attention_scores.dim() == 3:
+            # Raw attention weights: (H, S, S)
+            # Use last observation_window queries to score keys (SnapKV paper)
+            obs_start = max(0, prompt_length - config.observation_window)
+            recent_attn = attention_scores[:, obs_start:prompt_length, :prompt_length]
+            # Sum across heads and recent queries → per-key importance
+            importance = recent_attn.sum(dim=(0, 1))[:prompt_length].float()
+        elif attention_scores.dim() == 4:
+            # (B, H, S, S) — take first batch element
+            obs_start = max(0, prompt_length - config.observation_window)
+            recent_attn = attention_scores[0, :, obs_start:prompt_length, :prompt_length]
+            importance = recent_attn.sum(dim=(0, 1))[:prompt_length].float()
+        else:
+            logger.warning(
+                f"Unexpected attention shape {attention_scores.shape}, "
+                "falling back to position heuristic"
+            )
+            return self._select_by_position_heuristic(prompt_length, num_keep)
+
+        # Boost protected positions to guarantee retention
+        max_imp = importance.max().item() + 1.0
+        importance[:config.sink_tokens] += max_imp * 10  # Sink tokens
+        importance[-config.observation_window:] += max_imp * 5  # Recent tokens
+
+        # Top-k selection
+        _, top_indices = importance.topk(min(num_keep, prompt_length))
+        return top_indices.sort().values
+
+    def _select_by_position_heuristic(
+        self,
+        prompt_length: int,
+        num_keep: int,
+    ) -> torch.Tensor:
+        """Fallback SnapKV approximation using position-based importance.
+
+        Uses harmonic-mean distance: tokens closer to either end score higher.
+        Used when real attention scores are unavailable (e.g., SGLang rollout).
+        """
+        config = self.config
+        importance = torch.zeros(prompt_length, dtype=torch.float32)
+
+        for i in range(prompt_length):
+            dist_start = i + 1
+            dist_end = prompt_length - i
+            importance[i] = 2.0 / (1.0 / dist_start + 1.0 / dist_end)
+
+            if i < config.sink_tokens:
+                importance[i] += prompt_length  # Boost sink tokens
+            if i >= prompt_length - config.observation_window:
+                importance[i] += prompt_length * 0.5  # Boost recent tokens
+
+        _, top_indices = importance.topk(num_keep)
+        return top_indices.sort().values
 
     def generate_batch_shadow_masks(
         self,
