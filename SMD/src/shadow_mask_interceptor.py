@@ -37,18 +37,24 @@ class ShadowMaskConfig:
         enabled: Whether shadow mask generation is active.
         retention_ratio: Fraction of prompt KV positions to retain (e.g., 0.5 = 50%).
         strategy: Token selection algorithm. One of:
-            - "snapkv": Attention-guided selection using position-based importance
-              heuristic (approximates true SnapKV which uses attention scores).
+            - "snapkv": Attention-guided selection (uses real attention when available,
+              falls back to position heuristic).
+            - "r_kv": Redundancy-aware eviction. Joint importance (attention) ×
+              redundancy (key cosine similarity) scoring. Requires key_states.
             - "random": Uniformly random selection (with protected sink/recent tokens).
             - "recent": Keep only the most recent tokens + sink tokens.
         observation_window: Number of most-recent prompt tokens always retained.
         sink_tokens: Number of initial prompt tokens always retained (attention sinks).
+        r_kv_lambda: R-KV joint score weight λ. Low = favor removing redundant tokens.
+        r_kv_beta: R-KV: ignore top-β most similar neighbors in redundancy calc.
     """
     enabled: bool = False
     retention_ratio: float = 0.5
     strategy: str = "snapkv"
     observation_window: int = 64
     sink_tokens: int = 4
+    r_kv_lambda: float = 0.1
+    r_kv_beta: int = 4
 
 
 class ShadowMaskInterceptor:
@@ -81,6 +87,7 @@ class ShadowMaskInterceptor:
         response_length: int,
         seed: int | None = None,
         attention_scores: torch.Tensor | None = None,
+        key_states: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Generate a shadow mask for a single sample.
 
@@ -95,8 +102,10 @@ class ShadowMaskInterceptor:
             seed: Optional random seed for reproducibility (used by "random" strategy).
             attention_scores: Optional per-key importance scores of shape (seq_len,)
                 or attention weights of shape (num_heads, seq_len, seq_len).
-                When provided with strategy="snapkv", uses these real attention
-                scores instead of the position-based heuristic.
+                When provided with strategy="snapkv" or "r_kv", uses these real
+                attention scores instead of the position-based heuristic.
+            key_states: Optional key vectors of shape (seq_len, head_dim).
+                Required by strategy="r_kv" for redundancy scoring.
 
         Returns:
             Boolean tensor of shape (total_len, total_len) where True indicates
@@ -117,7 +126,7 @@ class ShadowMaskInterceptor:
 
         # Select which prompt positions to retain
         retained_prompt_indices = self._select_prompt_positions(
-            prompt_length, num_prompt_keep, seed, attention_scores
+            prompt_length, num_prompt_keep, seed, attention_scores, key_states
         )
 
         # Build the shadow mask
@@ -141,6 +150,7 @@ class ShadowMaskInterceptor:
         num_keep: int,
         seed: int | None = None,
         attention_scores: torch.Tensor | None = None,
+        key_states: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Select which prompt KV positions to retain based on the configured strategy.
 
@@ -199,6 +209,19 @@ class ShadowMaskInterceptor:
                 # ── Fallback: position-based heuristic ───────────────────
                 logger.debug(
                     "No attention scores provided for SnapKV, using position heuristic"
+                )
+                indices = self._select_by_position_heuristic(
+                    prompt_length, num_keep
+                )
+
+        elif config.strategy == "r_kv":
+            if attention_scores is not None:
+                indices = self._select_by_r_kv(
+                    prompt_length, num_keep, attention_scores, key_states
+                )
+            else:
+                logger.debug(
+                    "No attention scores for R-KV, falling back to position heuristic"
                 )
                 indices = self._select_by_position_heuristic(
                     prompt_length, num_keep
@@ -264,6 +287,86 @@ class ShadowMaskInterceptor:
 
         # Top-k selection
         _, top_indices = importance.topk(min(num_keep, prompt_length))
+        return top_indices.sort().values
+
+    def _select_by_r_kv(
+        self,
+        prompt_length: int,
+        num_keep: int,
+        attention_scores: torch.Tensor,
+        key_states: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """R-KV: select prompt positions using joint importance + redundancy scoring.
+
+        Implements the R-KV algorithm:
+        1. Importance: attention-based scoring (same as SnapKV)
+        2. Redundancy: cosine similarity between key vectors
+        3. Joint score: Z = λ·I - (1-λ)·R — keep high-importance, low-redundancy
+
+        Args:
+            prompt_length: Number of prompt tokens.
+            num_keep: Number of positions to retain.
+            attention_scores: Per-key importance (seq_len,) or raw weights (H,S,S).
+            key_states: Key vectors (seq_len, head_dim). If None, falls back to
+                pure attention-based selection (no redundancy scoring).
+
+        Returns:
+            Sorted tensor of retained position indices.
+        """
+        config = self.config
+        import torch.nn.functional as F
+
+        # ── Step 1: Compute importance (same as SnapKV) ──────────────
+        if attention_scores.dim() == 1:
+            importance = attention_scores[:prompt_length].float().clone()
+        elif attention_scores.dim() == 3:
+            obs_start = max(0, prompt_length - config.observation_window)
+            recent_attn = attention_scores[:, obs_start:prompt_length, :prompt_length]
+            importance = recent_attn.sum(dim=(0, 1)).float()
+        elif attention_scores.dim() == 4:
+            obs_start = max(0, prompt_length - config.observation_window)
+            recent_attn = attention_scores[0, :, obs_start:prompt_length, :prompt_length]
+            importance = recent_attn.sum(dim=(0, 1)).float()
+        else:
+            logger.warning(f"Unexpected attention shape, falling back to SnapKV")
+            return self._select_by_real_attention(prompt_length, num_keep, attention_scores)
+
+        # Normalize importance to [0, 1]
+        if importance.max() > importance.min():
+            importance = (importance - importance.min()) / (importance.max() - importance.min())
+
+        # ── Step 2: Compute redundancy (if key_states available) ─────
+        if key_states is not None and key_states.shape[0] >= prompt_length:
+            keys = key_states[:prompt_length].float()
+            key_norm = F.normalize(keys, dim=-1)
+            sim_matrix = torch.mm(key_norm, key_norm.t())  # (P, P)
+            sim_matrix.fill_diagonal_(0.0)
+
+            # Zero top-β most similar neighbors
+            beta = config.r_kv_beta
+            if beta > 0 and sim_matrix.shape[0] > beta:
+                _, topk_idx = sim_matrix.topk(beta, dim=-1)
+                sim_matrix.scatter_(1, topk_idx, 0.0)
+
+            avg_sim = sim_matrix.mean(dim=-1)
+            redundancy = F.softmax(avg_sim, dim=0)
+        else:
+            # No key states → redundancy = 0 (pure attention-based selection)
+            if key_states is None:
+                logger.debug("No key_states for R-KV redundancy, using attention only")
+            redundancy = torch.zeros(prompt_length, dtype=torch.float32)
+
+        # ── Step 3: Joint score Z = λ·I - (1-λ)·R ──────────────────
+        lam = config.r_kv_lambda
+        z_scores = lam * importance - (1 - lam) * redundancy.to(importance.device)
+
+        # Boost protected positions
+        max_z = z_scores.max().item() + 1.0
+        z_scores[:config.sink_tokens] += max_z * 10
+        z_scores[-config.observation_window:] += max_z * 5
+
+        # Top-k selection
+        _, top_indices = z_scores.topk(min(num_keep, prompt_length))
         return top_indices.sort().values
 
     def _select_by_position_heuristic(
