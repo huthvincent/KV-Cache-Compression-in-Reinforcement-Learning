@@ -147,6 +147,14 @@ def shadow_distillation_loss_function(
     # 我们需要将其转换为 per-token 的可信度掩码 (response_len,)
     # 思路：对于 response 中的每个 token，如果它在 shadow_mask 中的
     # 可见 KV 比率 >= retention_ratio，则认为该 token 是"同策略可信"的
+    #
+    # TODO [Issue A2]: "On-Policy Faithful" 声明需要理论支撑
+    # 当前实现存在以下问题：
+    # 1. Rollout 使用 dense model (SGLang 不支持 KV 压缩)
+    # 2. Shadow mask 只是 loss-level 过滤，不是真正的 shadow attention
+    # 3. Token 是在 π_dense 下生成的，但我们声称在 π_shadow 下计算 loss
+    # 建议：修改论文表述为 "approximately on-policy"，或添加理论分析
+    #
     shadow_token_masks = []
     for i, sm in enumerate(shadow_masks):
         if sm is None:
@@ -219,6 +227,18 @@ def shadow_distillation_loss_function(
     # 替代方案：使用 rollout_log_probs 作为 shadow target
     # （rollout 时的采样 log_probs 就是在稀疏条件下产生的）
     # D_KL(π_dense || π_shadow_target)
+    #
+    # TODO [Issue A1]: KL 散度计算与论文不一致
+    # 论文声明: D_KL(π_dense || π_shadow) = E_dense[log π_dense - log π_shadow]
+    # 当前实现: |log π_dense - log π_sparse| (绝对值差异，不是 KL 散度！)
+    #
+    # 建议修复方案：
+    # 方案 A (推荐): 使用 Forward KL
+    #   kl_per_token = (shadow_target_lp - dense_lp)
+    #   kl_distill_loss = sum_of_sample_mean(F.relu(kl_per_token))
+    #
+    # 方案 B: 修改论文表述为 "symmetric log-probability divergence"
+    #
     kl_distill_loss = torch.tensor(0.0, device=logits.device)
     if lambda_distill > 0 and "rollout_log_probs" in batch and batch["rollout_log_probs"]:
         dense_lp = torch.cat(log_probs, dim=0)

@@ -173,7 +173,19 @@ def compute_grpo_loss(model, tokenizer, prompt_inputs, responses, rewards, ref_m
 
 
 def run_training(args):
-    """Main training loop."""
+    """Main training loop.
+    
+    TODO [Issue B4]: 训练稳定性实验缺失
+    NeurIPS 审稿意见：当前实验只报告单次运行结果，缺乏统计显著性
+    
+    建议改进：
+    1. 使用多个随机种子运行实验 (至少 3-5 次)
+    2. 报告 mean ± std 而不是单次结果
+    3. 添加 --num-seeds 参数支持多种子运行
+    4. 在 metrics.json 中记录每次运行的结果
+    
+    示例: python run_grpo_training.py --dataset tldr --method smd --num-seeds 5
+    """
     print(f"\n{'='*60}")
     print(f"  GRPO Training: {args.method} on {args.dataset}")
     print(f"  Model: Qwen3-0.6B | Rollouts: {args.num_rollouts}")
@@ -293,7 +305,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
-    # Set seeds
+    # Set seeds (currently single seed - see Issue B4 in run_training docstring)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     random.seed(args.seed)
