@@ -95,36 +95,38 @@ SMD is built on top of a distributed RL training stack. All experiments run insi
 | [Ray](https://github.com/ray-project/ray) | 2.54.0 | Distributed task scheduling |
 | HuggingFace Transformers | 4.57.1 | Model loading & tokenization |
 
-### Step 1: Set Up the Docker Container
+### Step 1: Start the Docker Container
+
+> **⚠️ CRITICAL:** All experiments MUST run inside the `slimerl/slime:latest` Docker container.
+> This image contains the complete pre-installed stack: **Slime**, **Megatron-LM**, **SGLang**, **Ray**, and **PyTorch**.
+> Slime is NOT a public pip package — it is only available inside this Docker image.
+> Do NOT attempt to install Slime from veRL or any other public repository.
 
 ```bash
-# Start from an NVIDIA PyTorch base image
-docker run --gpus all --shm-size=64g --name smd_training \
-  -v /path/to/your/workspace:/workspace \
-  -it nvcr.io/nvidia/pytorch:25.02-py3
+# Pull the pre-built image (contains all dependencies)
+docker pull slimerl/slime:latest
 
-# Inside the container, install the required frameworks:
+# Start the container with GPU access and mount your project
+docker run -d \
+  --name slime_shadow \
+  --gpus all \
+  --shm-size=64g \
+  -v /path/to/RLKV_github:/path/to/RLKV_github \
+  slimerl/slime:latest \
+  sleep infinity
 
-# 1. Install Megatron-LM
-git clone https://github.com/NVIDIA/Megatron-LM.git /root/Megatron-LM
-cd /root/Megatron-LM && pip install -e .
-export PYTHONPATH=/root/Megatron-LM:$PYTHONPATH
-
-# 2. Install Slime (veRL fork with GRPO support)
-git clone https://github.com/volcengine/verl.git /root/slime
-cd /root/slime && pip install -e .
-
-# 3. Install SGLang (for rollout inference)
-pip install sglang[all]
-
-# 4. Install Ray
-pip install ray[default]
-
-# 5. Install other dependencies
-pip install rouge-score transformers accelerate
+# Verify the stack is working
+docker exec slime_shadow bash -c "
+  python -c 'from slime.backends.megatron_utils.loss import get_log_probs_and_entropy; print(\"✅ Slime OK\")'
+  python -c 'import sglang; print(\"✅ SGLang\", sglang.__version__)'
+  python -c 'import megatron; print(\"✅ Megatron OK\")'
+  nvidia-smi --query-gpu=name --format=csv,noheader
+"
 ```
 
-> **Note:** The exact Docker setup may require additional configuration depending on your GPU driver version and CUDA compatibility. We recommend starting from `nvcr.io/nvidia/pytorch:25.02-py3` which includes PyTorch + CUDA pre-configured.
+> **Architecture:** Slime's `train.py` (at `/root/slime/train.py`) is the training entry point.
+> Our code (`SMD/src/`, `baselines/`) provides custom loss functions that are injected via
+> `--custom-loss-function-path`. All `from slime.xxx import ...` calls happen inside the container.
 
 ### Step 2: Prepare Model Weights
 
@@ -167,21 +169,30 @@ mkdir -p shared_resources/datasets
 
 ## Quick Start
 
+> **All commands run inside the Docker container via `docker exec`.**
+
 ```bash
 # Run all 7 experiments (see experiments/README_EXPERIMENTS.md for details)
-bash experiments/exp_02_sota_showdown/run_exp.sh
+docker exec slime_shadow bash -c "
+  export PYTHONPATH=/root/Megatron-LM:/root/slime:/path/to/RLKV_github:\$PYTHONPATH
+  cd /path/to/RLKV_github/SMD
+  bash experiments/exp_02_sota_showdown/run_exp.sh
+"
 
 # Or run the micro sanity check first (10 rollouts, ~2 min per test)
-bash experiments/run_micro_sanity_check.sh
+docker exec slime_shadow bash -c "
+  cd /path/to/RLKV_github/SMD
+  bash experiments/run_micro_sanity_check.sh
+"
 ```
 
 Each experiment script has a **Configuration** section at the top — just change `MODEL_SIZE` and `MODEL_PATH` to scale up:
 
 ```bash
 # ── Configuration (Modify here for scale-up) ───────────────
-MODEL_SIZE="1.5B"        # ← Change to "7B" or "14B"
-MODEL_PATH="..."         # ← Point to your model weights
-CONTAINER="smd_training" # ← Your Docker container name
+MODEL_SIZE="1.5B"          # ← Change to "7B" or "14B"
+MODEL_PATH="..."           # ← Point to your model weights
+CONTAINER="slime_shadow"   # ← Your Docker container name
 ```
 
 ---
