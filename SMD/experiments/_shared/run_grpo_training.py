@@ -72,35 +72,6 @@ class PromptDataset(Dataset):
     def __getitem__(self, idx):
         return self.data[idx]
 
-
-# ═══════════════════════════════════════════════════════════════
-# Shadow Mask (for SMD / Naive methods)
-# ═══════════════════════════════════════════════════════════════
-
-def compute_shadow_mask(attention_scores, strategy, retention_ratio):
-    """Compute which KV positions to keep based on strategy."""
-    seq_len = attention_scores.shape[-1]
-    num_keep = max(1, int(seq_len * retention_ratio))
-
-    if strategy == "snapkv":
-        # SnapKV: keep positions with highest cumulative attention
-        importance = attention_scores.sum(dim=1).sum(dim=1)  # [batch, seq_len]
-        _, indices = importance.topk(num_keep, dim=-1)
-        mask = torch.zeros_like(importance, dtype=torch.bool)
-        mask.scatter_(1, indices, True)
-    elif strategy == "random":
-        mask = torch.zeros(attention_scores.shape[0], seq_len, dtype=torch.bool, device=attention_scores.device)
-        for b in range(mask.shape[0]):
-            keep_idx = torch.randperm(seq_len, device=attention_scores.device)[:num_keep]
-            mask[b, keep_idx] = True
-    elif strategy == "recent":
-        mask = torch.zeros(attention_scores.shape[0], seq_len, dtype=torch.bool, device=attention_scores.device)
-        mask[:, -num_keep:] = True
-    else:
-        raise ValueError(f"Unknown strategy: {strategy}")
-    return mask
-
-
 # ═══════════════════════════════════════════════════════════════
 # GRPO Training Loop
 # ═══════════════════════════════════════════════════════════════
