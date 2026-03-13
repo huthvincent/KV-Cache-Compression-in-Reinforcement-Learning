@@ -9,8 +9,7 @@ These are **RL training algorithms** that compete with SMD. Each addresses the o
 | Method | File | Core Mechanism |
 |--------|------|----------------|
 | **Sparse-RL** | `sparse_rl.py` | Reject 20% most-divergent rollouts + importance reweighting (ρ clipped to [0.8, 1.2]) |
-| **QuRL** | `qurl.py` | Update-Aware Quantization scaling + adaptive PPO clipping |
-| **RLHFless** | `rlhfless.py` | Deduplicated prefill + length-aware elastic scheduling |
+| **QuRL** *(appendix)* | `qurl.py` | Update-Aware Quantization scaling + adaptive PPO clipping |
 
 ```python
 # Usage: plug into Slime's custom loss

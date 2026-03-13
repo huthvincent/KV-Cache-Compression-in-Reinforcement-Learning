@@ -9,8 +9,7 @@ All methods follow the Slime custom loss interface:
 
 Registry:
     - sparse_rl: Rejection sampling + importance reweighting (arXiv:2601.10079)
-    - qurl:      Update-Aware Quantization + adaptive PPO clipping
-    - rlhfless:  Serverless elastic scheduling with deduplicated prefill
+    - qurl:      Update-Aware Quantization + adaptive PPO clipping (Appendix)
 
 Note:
     KV cache compression strategies (SnapKV, R-KV, Random, Recent) are in
@@ -21,10 +20,8 @@ Note:
 
 from .sparse_rl import sparse_rl_loss_function
 from .qurl import qurl_loss_function
-from .rlhfless import rlhfless_loss_function
 
 BASELINE_REGISTRY = {
     "sparse_rl": sparse_rl_loss_function,
     "qurl": qurl_loss_function,
-    "rlhfless": rlhfless_loss_function,
 }

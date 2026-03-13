@@ -31,7 +31,6 @@ print("=== Import Tests ===")
 test("import baselines", lambda: __import__("baselines"))
 test("import sparse_rl", lambda: __import__("baselines.sparse_rl"))
 test("import qurl", lambda: __import__("baselines.qurl"))
-test("import rlhfless", lambda: __import__("baselines.rlhfless"))
 test("import kv_compression", lambda: __import__("baselines.kv_compression"))
 test("import kv_compression.r_kv", lambda: __import__("baselines.kv_compression.r_kv"))
 test("import kv_compression.snapkv", lambda: __import__("baselines.kv_compression.snapkv"))
@@ -39,7 +38,7 @@ test("import kv_compression.snapkv", lambda: __import__("baselines.kv_compressio
 # ── Registry test ─────────────────────────────────────────────────────
 print("\n=== Registry ===")
 from baselines import BASELINE_REGISTRY
-test("registry has 3 RL methods", lambda: assert_(len(BASELINE_REGISTRY) == 3))
+test("registry has 2 RL methods", lambda: assert_(len(BASELINE_REGISTRY) == 2))
 test("all callables", lambda: assert_(all(callable(v) for v in BASELINE_REGISTRY.values())))
 
 # ── QuRL UAQ scaling ──────────────────────────────────────────────────
@@ -61,41 +60,6 @@ def test_uaq():
     assert torch.allclose(model[0].weight.data, ln_orig, atol=1e-4)
 
 test("UAQ scale + revert roundtrip", test_uaq)
-
-# ── RLHFless scheduling components ───────────────────────────────────
-print("\n=== RLHFless Scheduling ===")
-from baselines.rlhfless import (
-    LengthPredictor, find_shared_prefix, assign_prompts_by_length,
-    should_cut_and_migrate,
-)
-
-def test_length_predictor():
-    lp = LengthPredictor()
-    pred = lp.predict(42)
-    assert pred == 128  # default
-    lp.update(42, 200)
-    assert lp.predict(42) == 200  # EWMA alpha=1
-
-test("LengthPredictor", test_length_predictor)
-
-def test_shared_prefix():
-    prompts = [[1, 2, 3, 4, 5], [1, 2, 3, 6, 7], [1, 2, 3, 8, 9]]
-    assert find_shared_prefix(prompts) == 3
-
-test("find_shared_prefix", test_shared_prefix)
-
-def test_assignment():
-    assignments = assign_prompts_by_length(["a", "b", "c", "d"], [100, 50, 200, 75], 2)
-    assert len(assignments) == 2
-    assert sum(len(a) for a in assignments) == 4
-
-test("assign_prompts_by_length", test_assignment)
-
-def test_cut_migrate():
-    assert not should_cut_and_migrate([True, False, False, False])
-    assert should_cut_and_migrate([True, True, True, False])
-
-test("should_cut_and_migrate", test_cut_migrate)
 
 # ── R-KV compression engine (now in kv_compression/) ─────────────────
 print("\n=== R-KV Compression Engine ===")

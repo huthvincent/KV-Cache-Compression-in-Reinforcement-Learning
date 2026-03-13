@@ -11,7 +11,7 @@ Large Language Models require enormous GPU memory for their KV caches during inf
 | Project | Status | Description |
 |---------|--------|-------------|
 | **[SMD](./SMD/)** | ✅ Active | Shadow Mask Distillation — Dual-track GRPO loss for KV-compressed RL |
-| **[RL Baselines](./baselines/)** | ✅ Active | 3 SOTA RL training methods (Sparse-RL, QuRL, RLHFless) |
+| **[RL Baselines](./baselines/)** | ✅ Active | 2 SOTA RL training methods (Sparse-RL, QuRL) |
 | **[KV Compression](./baselines/kv_compression/)** | ✅ Active | 4 token selection strategies (SnapKV, R-KV, Random, Recent) |
 
 ## Roadmap
@@ -49,8 +49,7 @@ RLKV_github/
 │       └── hotpot_qa/         #   Multi-hop QA with distractors
 ├── baselines/                 # Baseline methods & strategies
 │   ├── sparse_rl.py           #   RL baseline: rejection sampling + importance reweighting
-│   ├── qurl.py                #   RL baseline: Update-Aware Quantization + adaptive clipping
-│   ├── rlhfless.py            #   RL baseline: serverless elastic scheduling
+│   ├── qurl.py                #   RL baseline (appendix): quantization-aware adaptive clipping
 │   └── kv_compression/        #   KV cache compression strategies (pluggable)
 │       ├── snapkv.py           #     Attention-guided token selection
 │       ├── r_kv.py             #     Redundancy-aware joint scoring
