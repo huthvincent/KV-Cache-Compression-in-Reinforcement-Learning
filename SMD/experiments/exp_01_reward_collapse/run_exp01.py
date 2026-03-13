@@ -198,13 +198,17 @@ def generate_with_kv_compression(model, tokenizer, prompt_text, max_new_tokens,
                 eos_id = tokenizer.eos_token_id
                 
                 # Step 5: Autoregressive generation with compressed KV
+                # NOTE: position_ids must use original prompt_len, not
+                # len(keep_indices). KV eviction deletes entries but preserved
+                # entries retain their original position embeddings.
                 for step_i in range(max_new_tokens - 1):
                     if generated[-1] == eos_id:
                         break
-                    cur_pos = len(keep_indices) + len(generated) - 1
+                    cur_pos = prompt_len + len(generated) - 1
                     position_ids = torch.tensor([[cur_pos]], device=model.device)
-                    kv_len = keep_tensor.shape[0] + len(generated) - 1
-                    att_mask = torch.ones((1, kv_len + 1), device=model.device, dtype=torch.long)
+                    # attention_mask length = current KV cache size + 1
+                    kv_cache_len = past_kv.get_seq_length() if hasattr(past_kv, 'get_seq_length') else keep_tensor.shape[0] + len(generated) - 1
+                    att_mask = torch.ones((1, kv_cache_len + 1), device=model.device, dtype=torch.long)
                     
                     out = model(
                         input_ids=next_token,
